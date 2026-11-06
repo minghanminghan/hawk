@@ -1,0 +1,13 @@
+# Template: caddy/setup.sh fills in @TS_IPS@ and installs it to /etc/caddy/Caddyfile.
+# Each site is a file in /etc/caddy/sites/, added with: sudo caddy/setup.sh <name> <upstream>
+
+# Listen on the tailscale IPs only. The certs come from a DNS-01 challenge, since Let's Encrypt
+# cannot reach a tailnet IP.
+(tailnet) {
+	bind @TS_IPS@
+	tls {
+		dns vercel {env.VERCEL_API_TOKEN}
+	}
+}
+
+import /etc/caddy/sites/*.caddy

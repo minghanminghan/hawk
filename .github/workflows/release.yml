@@ -1,0 +1,79 @@
+# Reusable: tags a release from conventional commits, then deploys it on the mini PC with `hawk deploy`.
+# Call it from an app's release workflow, after its tests:
+#   hawk:
+#     needs: test
+#     uses: minghanminghan/hawk/.github/workflows/release.yml@main
+#     permissions:
+#       contents: write
+#     with:
+#       app: sparrow
+name: release
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: Name of the app in hawk's apps/
+        required: true
+        type: string
+
+jobs:
+  # Tags + GitHub release only; never pushes commits (main is protected).
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [ -f .releaserc.json ] || cat >.releaserc.json <<'EOF'
+          {
+            "branches": ["main"],
+            "plugins": [
+              ["@semantic-release/commit-analyzer", {
+                "preset": "conventionalcommits",
+                "releaseRules": [{ "type": "perf", "release": false }, { "type": "revert", "release": false }]
+              }],
+              ["@semantic-release/release-notes-generator", { "preset": "conventionalcommits" }],
+              ["@semantic-release/github", { "successCommentCondition": false, "failCommentCondition": false }]
+            ]
+          }
+          EOF
+          npx --yes \
+            -p semantic-release@25.0.9 \
+            -p @semantic-release/commit-analyzer@13.0.1 \
+            -p @semantic-release/release-notes-generator@14.1.1 \
+            -p @semantic-release/github@12.0.10 \
+            -p conventional-changelog-conventionalcommits@9.3.1 \
+            semantic-release
+          tag=$(git tag --points-at HEAD --list 'v*' | head -n1)
+          if [ -n "$tag" ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Runs on the mini PC (sudo hawk runner). Fork PR workflows need approval to run (repo setting).
+  deploy:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: hawk
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: v${{ needs.release.outputs.version }}
+      - run: hawk deploy ${{ inputs.app }}

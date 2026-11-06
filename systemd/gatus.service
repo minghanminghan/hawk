@@ -1,0 +1,18 @@
+# Status page at https://status.<domain> (127.0.0.1:3400). Config: /etc/hawk/gatus.yaml, made by install.sh.
+[Unit]
+Description=hawk: gatus status page
+Wants=network-online.target
+After=network-online.target
+OnFailure=hawk-notify@%N.service
+
+[Service]
+DynamicUser=true
+StateDirectory=gatus
+EnvironmentFile=/etc/hawk/hawk.env
+Environment=GATUS_CONFIG_PATH=/etc/hawk/gatus.yaml
+ExecStart=/usr/local/bin/gatus
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

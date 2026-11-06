@@ -1,0 +1,2 @@
+# ls on release dirs is fine: hawk names them. JS in single quotes is on purpose.
+disable=SC1091,SC2010,SC2011,SC2012,SC2015,SC2016

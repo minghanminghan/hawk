@@ -1,0 +1,9 @@
+# OnFailure= target. hawk setup adds OnFailure=hawk-notify@%N.service to each app service.
+[Unit]
+Description=hawk: alert that %i failed
+
+[Service]
+Type=oneshot
+DynamicUser=true
+EnvironmentFile=/etc/hawk/hawk.env
+ExecStart=/opt/hawk/bin/hawk notify "%i failed. See: journalctl -u %i"

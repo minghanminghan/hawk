@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# hawk: deploys and monitors the apps on the mini PC. Each app is apps/<app>.env.
+#   sudo hawk setup <app> [checkout]   users, dirs, units, sudoers, Caddy site (default checkout: /opt/<app>/current)
+#   hawk deploy <app>                  run by the release workflow as hawk-runner, from the app's checkout
+#   sudo hawk rollback <app> [release] switch to the previous (or given) release and restart
+#   sudo hawk runner <repo-or-org-url> <token>   add a GitHub runner with the label "hawk"
+#   hawk notify <message>              push to ntfy ($NTFY_TOPIC in /etc/hawk/hawk.env)
+#   hawk heartbeat                     ping healthchecks.io, or /fail when the disk is 90%+ full
+set -euo pipefail
+
+HAWK=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+DOMAIN=${DOMAIN:-andrewminghanjiang.com}
+RUNNER_VERSION=2.338.2
+RUNNER_SHA256=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
+
+die() { echo "error: $*" >&2; exit 1; }
+step() { echo "==> $*"; }
+root() { [[ $EUID -eq 0 ]] || die "run as root (sudo hawk $*)"; }
+
+load() {
+  APP=${1:-}
+  [[ -n $APP && -f $HAWK/apps/$APP.env ]] || die "unknown app '$APP'. Apps: $(cd "$HAWK/apps" && ls | sed 's/\.env$//' | xargs)"
+  # shellcheck source=/dev/null
+  . "$HAWK/apps/$APP.env"
+  OPT=/opt/$APP
+  DATA=/var/lib/$APP
+  BACKUPS=/var/backups/$APP
+}
+
+env_file() { [[ -r /etc/hawk/hawk.env ]] && . /etc/hawk/hawk.env; true; }
+
+# Writes $2 to $1 if it differs. Returns 1 when unchanged.
+put() {
+  [[ -f $1 && $(cat "$1") == "$2" ]] && return 1
+  printf '%s\n' "$2" >"$1"
+}
+
+cmd_setup() {
+  root setup "$@"
+  load "$1"
+  local src=${2:-$OPT/current} systemctl unit dest changed=() units=()
+  src=$(readlink -f "$src")
+  [[ -d $src/deploy ]] || die "no deploy/ in $src. Pass a checkout of $APP: sudo hawk setup $APP <checkout>"
+  id -u hawk-runner >/dev/null 2>&1 || die "run install.sh first"
+  systemctl=$(command -v systemctl)
+
+  step "user: $APP"
+  id -u "$APP" >/dev/null 2>&1 || useradd --system --user-group --home-dir "$DATA" --no-create-home --shell /usr/sbin/nologin "$APP"
+
+  step "dirs: $DATA $BACKUPS $OPT/releases"
+  install -d -o "$APP" -g "$APP" -m 0750 "$DATA" "$BACKUPS"
+  install -d -o hawk-runner -g hawk-runner -m 0755 "$OPT" "$OPT/releases"
+  chown -R hawk-runner:hawk-runner "$OPT/releases"
+  for link in "$OPT/current" "$OPT/next"; do if [[ -L $link ]]; then chown -h hawk-runner:hawk-runner "$link"; fi; done
+
+  step "systemd: $src/deploy/*.service *.timer"
+  local node_bin
+  node_bin=$(readlink -f "$(command -v node)")
+  for unit in "$src"/deploy/*.service "$src"/deploy/*.timer; do
+    [[ -f $unit ]] || continue
+    unit=$(basename "$unit")
+    units+=("$unit")
+    dest=/etc/systemd/system/$unit
+    put "$dest" "$(sed -e "s|@NODE_BIN@|$node_bin|" -e "s|@PORT@|$PORT|" "$src/deploy/$unit")" && changed+=("$unit")
+    if [[ $unit == *.service ]]; then
+      install -d "$dest.d"
+      put "$dest.d/hawk.conf" "$(printf '[Unit]\nOnFailure=hawk-notify@%%N.service')" && changed+=("$unit")
+    fi
+  done
+  ((${#units[@]})) || die "no unit files in $src/deploy"
+  ((${#changed[@]} == 0)) || systemctl daemon-reload
+  for unit in "${units[@]}"; do if [[ $unit == *.timer ]]; then systemctl enable --now "$unit" >/dev/null; fi; done
+  # shellcheck disable=SC2086
+  systemctl enable $SERVICES >/dev/null
+
+  step "sudoers: hawk-runner may restart $SERVICES"
+  local rules="$systemctl start $APP-predeploy"
+  for svc in $SERVICES; do rules+=", $systemctl restart $svc"; done
+  local tmp=/etc/sudoers.d/hawk-$APP.tmp
+  if [[ $(cat "/etc/sudoers.d/hawk-$APP" 2>/dev/null) != "hawk-runner ALL=(root) NOPASSWD: $rules" ]]; then
+    printf 'hawk-runner ALL=(root) NOPASSWD: %s\n' "$rules" >"$tmp"
+    visudo -cqf "$tmp" || { rm -f "$tmp"; die "bad sudoers rule"; }
+    chmod 0440 "$tmp"
+    mv "$tmp" "/etc/sudoers.d/hawk-$APP"
+  fi
+
+  if [[ -x $src/deploy/hawk-setup.sh ]]; then
+    step "app: $src/deploy/hawk-setup.sh"
+    APP=$APP PORT=$PORT OPT=$OPT DATA=$DATA BACKUPS=$BACKUPS "$src/deploy/hawk-setup.sh"
+  fi
+
+  if [[ -e $OPT/current ]]; then
+    for svc in $SERVICES; do
+      if [[ " ${changed[*]} " == *" $svc.service "* ]] || ! systemctl is-active --quiet "$svc"; then systemctl restart "$svc"; fi
+      systemctl is-active --quiet "$svc" || echo "warning: $svc did not start. See journalctl -u $svc" >&2
+    done
+  fi
+
+  "$HAWK/caddy/setup.sh" "$APP" "127.0.0.1:$PORT"
+  echo "Done. $APP is at https://$APP.$DOMAIN. The first deploy starts it."
+}
+
+cmd_deploy() {
+  load "$1"
+  : "${VERSION:?set VERSION}"
+  local src r got
+  src=$(git rev-parse --show-toplevel)
+  r=$OPT/releases/$VERSION-${GITHUB_RUN_ID:-$(date +%s)}
+
+  step "build: $r"
+  mkdir -p "$r"
+  git -C "$src" archive HEAD | tar -x -C "$r"
+  (cd "$r" && APP=$APP OPT=$OPT VERSION=$VERSION deploy/build.sh)
+
+  ln -sfn "$r" "$OPT/next"
+  if systemctl cat "$APP-predeploy.service" >/dev/null 2>&1; then
+    step "predeploy: $APP-predeploy"
+    sudo systemctl start "$APP-predeploy"
+  fi
+
+  step "switch + restart: $SERVICES"
+  ln -sfn "$r" "$OPT/current"
+  for svc in $SERVICES; do sudo systemctl restart "$svc"; done
+
+  step "health check: 127.0.0.1:$PORT$HEALTH"
+  for _ in $(seq 1 30); do
+    got=$(curl -fsS "http://127.0.0.1:$PORT$HEALTH" 2>/dev/null | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' || true)
+    [[ $got == "$VERSION" ]] && break
+    sleep 1
+  done
+  [[ $got == "$VERSION" ]] || die "$HEALTH is '$got', expected $VERSION. See journalctl -u ${SERVICES%% *}"
+  for svc in $SERVICES; do
+    systemctl is-active --quiet "$svc" || die "$svc is not running. See journalctl -u $svc"
+  done
+
+  step "prune releases"
+  cd "$OPT/releases"
+  ls -1t | tail -n +4 | while read -r old; do
+    [[ $OPT/releases/$old == "$(readlink -f "$OPT/current")" ]] || rm -rf "$old"
+  done
+  echo "deployed $APP $VERSION"
+}
+
+cmd_rollback() {
+  root rollback "$@"
+  load "$1"
+  local cur to=${2:-}
+  cur=$(basename "$(readlink -f "$OPT/current")")
+  [[ -n $to ]] || to=$(cd "$OPT/releases" && ls -1t | grep -vx "$cur" | head -n1 || true)
+  [[ -n $to && -d $OPT/releases/$to ]] || die "no release to roll back to. Releases: $(ls -1t "$OPT/releases" | xargs)"
+  echo "$cur -> $to"
+  echo "If a migration changed the DB, stop $SERVICES and restore a backup from $BACKUPS first."
+  ln -sfn "$OPT/releases/$to" "$OPT/current"
+  for svc in $SERVICES; do systemctl restart "$svc"; done
+  echo "rolled back $APP to $to"
+}
+
+cmd_runner() {
+  root runner "$@"
+  local url=${1:-} token=${2:-} dir tarball
+  [[ -n $url && -n $token ]] || die "usage: sudo hawk runner <https://github.com/owner[/repo]> <token>"
+  dir=/home/hawk-runner/runners/$(basename "$url")
+  [[ -e $dir/.runner ]] && { echo "runner already configured in $dir"; return; }
+  tarball=actions-runner-linux-x64-$RUNNER_VERSION.tar.gz
+  runuser -u hawk-runner -- mkdir -p "$dir"
+  cd "$dir"
+  runuser -u hawk-runner -- curl -fsSL -o "$tarball" "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/$tarball"
+  echo "$RUNNER_SHA256  $tarball" | sha256sum -c -
+  runuser -u hawk-runner -- tar -xzf "$tarball"
+  rm "$tarball"
+  runuser -u hawk-runner -- ./config.sh --unattended --url "$url" --token "$token" \
+    --name "$(hostname)-hawk" --labels hawk --no-default-labels --replace
+  ./svc.sh install hawk-runner
+  ./svc.sh start
+}
+
+cmd_notify() {
+  env_file
+  [[ -n ${NTFY_TOPIC:-} ]] || die "no NTFY_TOPIC in /etc/hawk/hawk.env"
+  curl -fsS -m 10 --retry 3 -H "Title: hawk on $(hostname)" -d "$*" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null
+}
+
+cmd_heartbeat() {
+  env_file
+  [[ -n ${HC_PING_URL:-} ]] || die "no HC_PING_URL in /etc/hawk/hawk.env"
+  local used fail=
+  used=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+  ((used < 90)) || fail=/fail
+  curl -fsS -m 10 --retry 3 --data-raw "disk / is $used% full" "$HC_PING_URL$fail" >/dev/null
+}
+
+cmd=${1:-}
+shift || true
+case $cmd in
+  setup | deploy | rollback | runner | notify | heartbeat) "cmd_$cmd" "$@" ;;
+  *) sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
+esac

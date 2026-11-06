@@ -1,0 +1,11 @@
+# Pings healthchecks.io, which alerts when the pings stop (box down) or report /fail (disk 90%+ full).
+[Unit]
+Description=hawk: heartbeat to healthchecks.io
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=true
+EnvironmentFile=/etc/hawk/hawk.env
+ExecStart=/opt/hawk/bin/hawk heartbeat
