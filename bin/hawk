@@ -140,6 +140,10 @@ cmd_deploy() {
   ls -1t | tail -n +4 | while read -r old; do
     [[ $OPT/releases/$old == "$(readlink -f "$OPT/current")" ]] || rm -rf "$old"
   done
+
+  step "prune caches"
+  if [[ -f $r/pnpm-lock.yaml ]]; then (cd "$r" && pnpm store prune) || echo "warning: pnpm store prune failed" >&2; fi
+  if [[ -d $OPT/uv-cache ]]; then UV_CACHE_DIR=$OPT/uv-cache uv cache prune || echo "warning: uv cache prune failed" >&2; fi
   echo "deployed $APP $VERSION"
 }
 
