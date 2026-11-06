@@ -21,6 +21,8 @@ git clone https://github.com/minghanminghan/hawk ~/hawk   # first time
 cd ~/hawk && git pull && sudo ./install.sh
 ```
 
+From a laptop checkout, `pnpm box:install` does the same over ssh. It asks for your sudo password on the box.
+
 The first run makes `/etc/hawk/hawk.env` from `~/hawk/hawk.env` (git-ignored) if it exists, or asks for:
 
 - `RESEND_API_KEY`, `EMAIL_FROM` (on a domain verified in Resend) and `EMAIL_TO`;
