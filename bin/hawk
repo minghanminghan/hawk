@@ -4,7 +4,7 @@
 #   hawk deploy <app>                  run by the release workflow as hawk-runner, from the app's checkout
 #   sudo hawk rollback <app> [release] switch to the previous (or given) release and restart
 #   sudo hawk runner <repo-or-org-url> <token>   add a GitHub runner with the label "hawk"
-#   hawk notify <message>              push to ntfy ($NTFY_TOPIC in /etc/hawk/hawk.env)
+#   hawk notify <message>              email EMAIL_TO through Resend (values in /etc/hawk/hawk.env)
 #   hawk heartbeat                     ping healthchecks.io, or /fail when the disk is 90%+ full
 set -euo pipefail
 
@@ -176,8 +176,11 @@ cmd_runner() {
 
 cmd_notify() {
   env_file
-  [[ -n ${NTFY_TOPIC:-} ]] || die "no NTFY_TOPIC in /etc/hawk/hawk.env"
-  curl -fsS -m 10 --retry 3 -H "Title: hawk on $(hostname)" -d "$*" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null
+  [[ -n ${RESEND_API_KEY:-} && -n ${EMAIL_FROM:-} && -n ${EMAIL_TO:-} ]] || die "set RESEND_API_KEY, EMAIL_FROM and EMAIL_TO in /etc/hawk/hawk.env"
+  jq -n --arg from "$EMAIL_FROM" --arg to "$EMAIL_TO" --arg subject "hawk: $*" --arg text "$* (on $(hostname))" \
+    '{from: $from, to: [$to], subject: $subject, text: $text}' |
+    curl -fsS -m 10 --retry 3 -H "Authorization: Bearer $RESEND_API_KEY" -H "Content-Type: application/json" \
+      --data-binary @- https://api.resend.com/emails >/dev/null
 }
 
 cmd_heartbeat() {

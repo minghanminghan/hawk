@@ -3,7 +3,8 @@
 #   git pull && sudo ./install.sh
 # Copies the checkout to /opt/hawk, links /usr/local/bin/hawk, creates hawk-runner, installs the
 # heartbeat timer, the OnFailure alert unit and gatus (status page for every app in apps/), and serves
-# https://status.<domain> to the tailnet. Asks for the ntfy topic and healthchecks.io URL once.
+# https://status.<domain> to the tailnet. Alerts are emails through Resend. The first run takes
+# /etc/hawk/hawk.env from ./hawk.env (git-ignored) if it exists, or asks for its values.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -17,7 +18,7 @@ die() { echo "error: $*" >&2; exit 1; }
 step() { echo "==> $*"; }
 
 [[ $EUID -eq 0 ]] || die "run as root (sudo $0)"
-for cmd in systemctl tailscale go node caddy curl rsync visudo useradd; do
+for cmd in systemctl tailscale go node caddy curl jq rsync visudo useradd; do
   command -v "$cmd" >/dev/null || die "$cmd not found"
 done
 
@@ -26,7 +27,7 @@ dupes=$( (echo "PORT=$GATUS_PORT"; cat "$HERE"/apps/*.env) | sed -n 's/^PORT=//p
 [[ -z $dupes ]] || die "port used twice in apps/*.env (or by gatus): $dupes"
 
 step "files: $HAWK, /usr/local/bin/hawk"
-rsync -a --delete --exclude .git "$HERE/" "$HAWK/"
+rsync -a --delete --exclude .git --exclude hawk.env "$HERE/" "$HAWK/"
 chown -R root:root "$HAWK"
 ln -sfn "$HAWK/bin/hawk" /usr/local/bin/hawk
 
@@ -34,11 +35,22 @@ step "config: $ETC/hawk.env"
 install -d -m 0755 "$ETC"
 if [[ ! -f $ETC/hawk.env ]]; then
   [[ -t 0 ]] || die "no $ETC/hawk.env. Run this in a terminal to be asked for its values"
-  read -rp "ntfy topic (a long random name; subscribe to it in the ntfy app): " topic
-  read -rp "healthchecks.io ping URL (https://hc-ping.com/<uuid>): " hc
-  install -m 0600 /dev/null "$ETC/hawk.env"
-  printf 'NTFY_TOPIC=%s\nHC_PING_URL=%s\n' "$topic" "$hc" >"$ETC/hawk.env"
+  if [[ -f $HERE/hawk.env ]]; then
+    install -m 0600 "$HERE/hawk.env" "$ETC/hawk.env"
+  else
+    [[ -t 0 ]] || die "no $ETC/hawk.env. Run this in a terminal to be asked for its values"
+    read -rsp "Resend API key: " key
+    echo
+    read -rp "Email from (a verified Resend domain, e.g. hawk <hawk@$DOMAIN>): " from
+    read -rp "Email to: " to
+    read -rp "healthchecks.io ping URL (https://hc-ping.com/<uuid>): " hc
+    install -m 0600 /dev/null "$ETC/hawk.env"
+    printf "RESEND_API_KEY=%s\nEMAIL_FROM='%s'\nEMAIL_TO=%s\nHC_PING_URL=%s\n" "$key" "$from" "$to" "$hc" >"$ETC/hawk.env"
+  fi
 fi
+for key in RESEND_API_KEY EMAIL_FROM EMAIL_TO HC_PING_URL; do
+  grep -q "^$key=." "$ETC/hawk.env" || die "no $key in $ETC/hawk.env. Fix it: sudo -e $ETC/hawk.env"
+done
 
 step "user: hawk-runner"
 if ! id -u hawk-runner >/dev/null 2>&1; then
@@ -66,9 +78,10 @@ ui:
   title: hawk
   dashboard-heading: $(hostname)
 alerting:
-  ntfy:
-    topic: "\${NTFY_TOPIC}"
-    click: https://status.$DOMAIN
+  resend:
+    api-key: "\${RESEND_API_KEY}"
+    from: "\${EMAIL_FROM}"
+    to: "\${EMAIL_TO}"
     default-alert:
       failure-threshold: 3
       send-on-resolved: true
@@ -86,7 +99,7 @@ EOF
       - "[RESPONSE_TIME] < 2000"
       - "[CERTIFICATE_EXPIRATION] > 168h"
     alerts:
-      - type: ntfy
+      - type: resend
 EOF
   done
 )

@@ -8,10 +8,10 @@ Deploys and monitors the apps on the mini PC (`andrewsserver`). Each app runs as
 - **Deploys.** The reusable `release.yml` workflow tags a release, then the `hawk` runner runs `hawk deploy <app>`. That builds into `/opt/<app>/releases/<version>`, runs `<app>-predeploy` if the app has it, switches `/opt/<app>/current`, restarts, and checks the health path.
 - **Rollback.** `sudo hawk rollback <app> [release]`.
 - **Status page.** Gatus checks every app each minute at `https://status.andrewminghanjiang.com`.
-- **Alerts** go to ntfy:
+- **Alerts** are emails, sent through Resend (budgie's sender):
   - an app is down 3 checks in a row, or its cert expires in under 7 days (gatus);
   - any app service fails, including backups and predeploy (`OnFailure=hawk-notify@`);
-  - the box stops sending heartbeats, or its disk is 90%+ full (healthchecks.io).
+  - the box stops sending heartbeats, or its disk is 90%+ full (healthchecks.io emails you itself).
 
 ## Install or update (mini PC)
 
@@ -20,10 +20,10 @@ git clone https://github.com/minghanminghan/hawk ~/hawk   # first time
 cd ~/hawk && git pull && sudo ./install.sh
 ```
 
-The first run asks for:
+The first run makes `/etc/hawk/hawk.env` from `~/hawk/hawk.env` (git-ignored) if it exists, or asks for:
 
-- an ntfy topic: pick a long random name, then subscribe to it in the ntfy phone app;
-- a healthchecks.io ping URL: make a check with a 5 min period and 10 min grace, and connect it to the same ntfy topic.
+- `RESEND_API_KEY`, `EMAIL_FROM` (on a domain verified in Resend) and `EMAIL_TO`;
+- `HC_PING_URL`: make a healthchecks.io check with a 5 min period and 10 min grace. It emails your account when pings stop.
 
 ## Add an app
 
