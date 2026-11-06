@@ -2,9 +2,10 @@
 # Installs or updates hawk on the mini PC. Run as root from a checkout; safe to re-run:
 #   git pull && sudo ./install.sh
 # Copies the checkout to /opt/hawk, links /usr/local/bin/hawk, creates hawk-runner, installs the
-# heartbeat timer, the OnFailure alert unit and gatus (status page for every app in apps/), and serves
-# https://status.<domain> to the tailnet. Alerts are emails through Resend. The first run takes
-# /etc/hawk/hawk.env from ./hawk.env (git-ignored) if it exists, or asks for its values.
+# heartbeat timer, the OnFailure alert unit, gatus (uptime page for every app in apps/) and the hawk
+# status page, and serves https://status.<domain> and https://hawk.<domain> to the tailnet. Alerts are
+# emails through Resend. The first run takes /etc/hawk/hawk.env from ./hawk.env (git-ignored) if it
+# exists, or asks for its values.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -120,15 +121,18 @@ for f in "$HERE"/systemd/*; do
 done
 ((reload == 0)) || systemctl daemon-reload
 systemctl enable --now hawk-heartbeat.timer >/dev/null
+systemctl enable --now hawk-status.timer >/dev/null
+systemctl start hawk-status
 systemctl enable gatus >/dev/null
 if ((restart_gatus)) || ! systemctl is-active --quiet gatus; then systemctl restart gatus; fi
 systemctl is-active --quiet gatus || die "gatus did not start. See journalctl -u gatus"
 
 "$HAWK/caddy/setup.sh" status "127.0.0.1:$GATUS_PORT"
+"$HAWK/caddy/setup.sh" hawk /var/lib/hawk-status
 
 cat <<EOF
 
-Done. Status page: https://status.$DOMAIN
+Done. Status pages: https://hawk.$DOMAIN (deploys) and https://status.$DOMAIN (uptime)
 Test the alerts:  sudo hawk notify "hello from hawk"  &&  sudo systemctl start hawk-heartbeat
 
 Next, for each app:
