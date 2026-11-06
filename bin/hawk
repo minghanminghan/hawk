@@ -47,10 +47,10 @@ cmd_setup() {
   step "user: $APP"
   id -u "$APP" >/dev/null 2>&1 || useradd --system --user-group --home-dir "$DATA" --no-create-home --shell /usr/sbin/nologin "$APP"
 
-  step "dirs: $DATA $BACKUPS $OPT/releases"
+  step "dirs: $DATA $BACKUPS $OPT"
   install -d -o "$APP" -g "$APP" -m 0750 "$DATA" "$BACKUPS"
   install -d -o hawk-runner -g hawk-runner -m 0755 "$OPT" "$OPT/releases"
-  chown -R hawk-runner:hawk-runner "$OPT/releases"
+  chown -R hawk-runner:hawk-runner "$OPT"
   for link in "$OPT/current" "$OPT/next"; do if [[ -L $link ]]; then chown -h hawk-runner:hawk-runner "$link"; fi; done
 
   step "systemd: $src/deploy/*.service *.timer"
