@@ -64,7 +64,8 @@ cmd_setup() {
     put "$dest" "$(sed -e "s|@NODE_BIN@|$node_bin|" -e "s|@PORT@|$PORT|" "$src/deploy/$unit")" && changed+=("$unit")
     if [[ $unit == *.service ]]; then
       install -d "$dest.d"
-      put "$dest.d/hawk.conf" "$(printf '[Unit]\nOnFailure=hawk-notify@%%N.service')" && changed+=("$unit")
+      # Node exits 143 on the SIGTERM of a restart; that is not a failure.
+      put "$dest.d/hawk.conf" "$(printf '[Unit]\nOnFailure=hawk-notify@%%N.service\n\n[Service]\nSuccessExitStatus=143')" && changed+=("$unit")
     fi
   done
   ((${#units[@]})) || die "no unit files in $src/deploy"
