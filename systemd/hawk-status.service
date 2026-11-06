@@ -1,0 +1,12 @@
+# Writes the status page that Caddy serves at https://hawk.<domain>. Started by hawk-status.timer.
+[Unit]
+Description=hawk: write the status page
+
+[Service]
+Type=oneshot
+StateDirectory=hawk-status
+StateDirectoryMode=0755
+ExecStart=/opt/hawk/bin/hawk status /var/lib/hawk-status/index.html
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

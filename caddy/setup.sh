@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Serves https://<name>.$DOMAIN to the tailnet only, through Caddy on :443. Run as root; safe to re-run:
 #   sudo [DOMAIN=andrewminghanjiang.com] caddy/setup.sh <name> <upstream>
+#   <upstream> is host:port to proxy, or an absolute dir to serve as static files
 #   hawk setup runs it for each app
 # Adds Caddy's vercel DNS plugin, the base Caddyfile bound to the tailscale IPs, the caddy.service
 # drop-in, and /etc/caddy/sites/<name>.caddy, then points <name>'s A/AAAA records at the tailscale IPs.
@@ -75,7 +76,8 @@ step "caddy: /etc/caddy/Caddyfile /etc/caddy/sites/$NAME.caddy $DROPIN"
 grep -q 'caddy/setup.sh' /etc/caddy/Caddyfile 2>/dev/null || cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.orig 2>/dev/null || true
 install -d /etc/caddy/sites "$(dirname "$DROPIN")"
 put /etc/caddy/Caddyfile "$(sed "s|@TS_IPS@|$IP4 $IP6|" "$HERE/Caddyfile")"
-put "/etc/caddy/sites/$NAME.caddy" "$(printf '%s {\n\timport tailnet\n\treverse_proxy %s\n}' "$HOST" "$UPSTREAM")"
+if [[ $UPSTREAM == /* ]]; then site="root * $UPSTREAM"$'\n\t'"file_server"; else site="reverse_proxy $UPSTREAM"; fi
+put "/etc/caddy/sites/$NAME.caddy" "$(printf '%s {\n\timport tailnet\n\t%s\n}' "$HOST" "$site")"
 if [[ ! -f $DROPIN ]] || [[ $(cat "$DROPIN") != "$(cat "$HERE/caddy.conf")" ]]; then
   cp "$HERE/caddy.conf" "$DROPIN"
   systemctl daemon-reload

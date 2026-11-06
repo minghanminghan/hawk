@@ -8,6 +8,7 @@ Deploys and monitors the apps on the mini PC (`andrewsserver`). Each app runs as
 - **Deploys.** The reusable `release.yml` workflow tags a release, then the `hawk` runner runs `hawk deploy <app>`. That builds into `/opt/<app>/releases/<version>`, runs `<app>-predeploy` if the app has it, switches `/opt/<app>/current`, restarts, and checks the health path.
 - **Rollback.** `sudo hawk rollback <app> [release]`.
 - **Status page.** Gatus checks every app each minute at `https://status.andrewminghanjiang.com`.
+- **hawk page.** `https://hawk.andrewminghanjiang.com`, rewritten each minute by `hawk status`: each app's live version, release, deploy time, rollback target and services, plus the runners, the last 7 days of alerts, disk and heartbeat.
 - **Alerts** are emails, sent through Resend (budgie's sender):
   - an app is down 3 checks in a row, or its cert expires in under 7 days (gatus);
   - any app service fails, including backups and predeploy (`OnFailure=hawk-notify@`);

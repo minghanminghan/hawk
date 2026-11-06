@@ -6,6 +6,7 @@
 #   sudo hawk runner <repo-or-org-url> <token>   add a GitHub runner with the label "hawk"
 #   hawk notify <message>              email EMAIL_TO through Resend (values in /etc/hawk/hawk.env)
 #   hawk heartbeat                     ping healthchecks.io, or /fail when the disk is 90%+ full
+#   hawk status [file]                 write the status page (https://hawk.<domain>) as HTML
 set -euo pipefail
 
 HAWK=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
@@ -193,9 +194,87 @@ cmd_heartbeat() {
   curl -fsS -m 10 --retry 3 --data-raw "disk / is $used% full" "$HC_PING_URL$fail" >/dev/null
 }
 
+# Prints the state of a unit as a colored badge.
+badge() {
+  local s
+  s=$(systemctl is-active "$1" 2>/dev/null || true)
+  if [[ $s == active ]]; then echo "<b class=ok>$s</b>"; else echo "<b class=bad>${s:-unknown}</b>"; fi
+}
+
+# Per app: live version, release, deploy time, previous release, services. Then runners, alerts, box.
+cmd_status() {
+  local out=${1:-} f apps='' runners='' alerts unit name html
+  for f in "$HAWK"/apps/*.env; do
+    apps+=$(
+      load "$(basename "$f" .env)"
+      ver=$(curl -fsS -m 3 "http://127.0.0.1:$PORT$HEALTH" 2>/dev/null | sed -n 's/.*"version" *: *"\([^"<>&]*\)".*/\1/p')
+      rel=$(basename "$(readlink "$OPT/current" 2>/dev/null)")
+      at=$(stat -c %y "$OPT/current" 2>/dev/null | cut -c1-16)
+      prev=$(cd "$OPT/releases" 2>/dev/null && ls -1t | grep -vx "$rel" | head -n1)
+      svcs=
+      for svc in $SERVICES; do svcs+="$(badge "$svc") $svc<br>"; done
+      printf '<tr><td><a href="https://%s.%s">%s</a></td><td>%s</td><td>%s<br><small>%s</small></td><td>%s</td><td>%s</td></tr>\n' \
+        "$APP" "$DOMAIN" "$APP" "${ver:-<b class=bad>down</b>}" "${rel:--}" "${at:--}" "${prev:--}" "$svcs"
+    )
+  done
+  for unit in $(systemctl list-units --all --plain --no-legend 'actions.runner.*' | awk '{print $1}'); do
+    name=${unit#actions.runner.}
+    runners+="<tr><td>${name%.service}</td><td>$(badge "$unit")</td></tr>"
+  done
+  alerts=$(journalctl -q -u 'hawk-notify@*' --since '7 days ago' -o short-iso --no-pager 2>/dev/null |
+    sed -n 's/^\([0-9-]\{10\}\)T\([0-9:]\{5\}\).*Starting hawk-notify@\([^ ]*\)\.service.*/<tr><td>\1 \2<\/td><td>\3<\/td><\/tr>/p' | tail -n 10 | tac)
+  html=$(
+    cat <<EOF
+<!doctype html>
+<html lang=en>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width, initial-scale=1">
+<meta http-equiv=refresh content=60>
+<title>hawk</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1917; --bg: #fafaf9; --muted: #78716c; --line: #e7e5e4; --ok: #15803d; --bad: #b91c1c; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e7e5e4; --bg: #1c1917; --muted: #a8a29e; --line: #44403c; --ok: #4ade80; --bad: #f87171; } }
+body { margin: 0 auto; max-width: 960px; padding: 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 15px; margin: 24px 0 8px; }
+p, small, th { color: var(--muted); } a { color: inherit; }
+.wrap { overflow-x: auto; } table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; vertical-align: top; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-weight: 500; font-size: 13px; } .ok { color: var(--ok); } .bad { color: var(--bad); } b { font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>hawk · $(hostname)</h1>
+<p>Updated $(date -u '+%F %H:%M') UTC. Uptime checks: <a href="https://status.$DOMAIN">status.$DOMAIN</a>.</p>
+<h2>Apps</h2>
+<div class=wrap><table>
+<tr><th>App</th><th>Live version</th><th>Release / deployed (UTC)</th><th>Rollback target</th><th>Services</th></tr>
+$apps
+</table></div>
+<h2>Runners</h2>
+<div class=wrap><table>${runners:-<tr><td>none</td></tr>}</table></div>
+<h2>Alerts, last 7 days</h2>
+<div class=wrap><table><tr><th>Time (UTC)</th><th>Unit</th></tr>${alerts:-<tr><td>none</td><td></td></tr>}</table></div>
+<h2>Box</h2>
+<div class=wrap><table>
+<tr><td>Disk /</td><td>$(df -h --output=pcent,size / | tail -1 | awk '{print $1 " of " $2}')</td></tr>
+<tr><td>Uptime</td><td>$(uptime -p)</td></tr>
+<tr><td>Heartbeat</td><td>$(systemctl show -P Result hawk-heartbeat.service) <small>$(systemctl show -P ExecMainExitTimestamp hawk-heartbeat.service)</small></td></tr>
+<tr><td>gatus</td><td>$(badge gatus)</td></tr>
+<tr><td>caddy</td><td>$(badge caddy)</td></tr>
+</table></div>
+</body>
+</html>
+EOF
+  )
+  if [[ -z $out ]]; then printf '%s\n' "$html"; return; fi
+  printf '%s\n' "$html" >"$out.tmp"
+  mv "$out.tmp" "$out"
+}
+
 cmd=${1:-}
 shift || true
 case $cmd in
-  setup | deploy | rollback | runner | notify | heartbeat) "cmd_$cmd" "$@" ;;
-  *) sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
+  setup | deploy | rollback | runner | notify | heartbeat | status) "cmd_$cmd" "$@" ;;
+  *) sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
 esac
