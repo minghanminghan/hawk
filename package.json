@@ -3,6 +3,7 @@
   "private": true,
   "packageManager": "pnpm@11.11.0",
   "scripts": {
-    "box:install": "ssh -t andrewj@andrewsserver 'cd ~/hawk && git pull --ff-only && sudo ./install.sh'"
+    "box:install": "ssh -t andrewj@andrewsserver 'cd ~/hawk && git pull --ff-only && sudo ./install.sh'",
+    "ship": "scripts/ship.sh"
   }
 }

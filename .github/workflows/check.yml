@@ -13,4 +13,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: shellcheck bin/hawk install.sh caddy/setup.sh
+      - run: shellcheck bin/hawk bin/hawk-update install.sh caddy/setup.sh scripts/ship.sh

@@ -23,6 +23,12 @@ cd ~/hawk && git pull && sudo ./install.sh
 
 From a laptop checkout, `pnpm box:install` does the same over ssh. It asks for your sudo password on the box.
 
+## Ship a change (laptop)
+
+Commit on a feature branch, then run `pnpm ship [--task HAWK-12]`. It pushes, opens the PR, waits for CI, merges, runs `sudo hawk-update` on the box (hawk goes to `main`, then `hawk setup` re-runs for each app and restarts only services whose units changed), checks that every service is active, comments on the task and marks it done, then switches to `main`. Safe to re-run after a failure.
+
+`hawk-update` needs no password: `install.sh` lets the user who ran it run `/usr/local/sbin/hawk-update` (no arguments) as root. It only deploys GitHub `main`, from a root-owned checkout in `/var/lib/hawk-src`. Run `pnpm box:install` once to set it up.
+
 The first run makes `/etc/hawk/hawk.env` from `~/hawk/hawk.env` (git-ignored) if it exists, or asks for:
 
 - `RESEND_API_KEY`, `EMAIL_FROM` (on a domain verified in Resend) and `EMAIL_TO`;
