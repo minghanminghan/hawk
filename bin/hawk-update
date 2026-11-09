@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Updates hawk on the mini PC to GitHub main, then re-runs `hawk setup` for each set-up app (it
+# restarts a service only when its units changed). install.sh copies this to /usr/local/sbin and
+# lets the admin user run it with no password: it only ever deploys what is on main.
+#   sudo hawk-update
+set -euo pipefail
+
+SRC=/var/lib/hawk-src
+REPO=https://github.com/minghanminghan/hawk
+
+# All in a function so bash has read the whole file before install.sh replaces it.
+main() {
+  [[ $EUID -eq 0 ]] || { echo "error: run as root (sudo hawk-update)" >&2; exit 1; }
+  exec 9>/run/hawk-update.lock
+  flock -n 9 || { echo "error: another hawk-update is running" >&2; exit 1; }
+
+  echo "==> source: $SRC at origin/main"
+  [[ -d $SRC/.git ]] || git clone -q "$REPO" "$SRC"
+  git -C "$SRC" fetch -q origin main
+  git -C "$SRC" reset -q --hard origin/main
+  git -C "$SRC" clean -qfdx
+  echo "    $(git -C "$SRC" log --oneline -1)"
+
+  "$SRC/install.sh" </dev/null
+
+  local f app
+  for f in /opt/hawk/apps/*.env; do
+    app=$(basename "$f" .env)
+    if [[ -e /opt/$app/current ]]; then
+      echo "==> hawk setup $app"
+      hawk setup "$app"
+    else
+      echo "==> skip $app (not deployed yet)"
+    fi
+  done
+  echo "hawk is at $(cat /opt/hawk/COMMIT)"
+}
+
+main "$@"
+exit

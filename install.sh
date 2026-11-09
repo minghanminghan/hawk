@@ -19,7 +19,7 @@ die() { echo "error: $*" >&2; exit 1; }
 step() { echo "==> $*"; }
 
 [[ $EUID -eq 0 ]] || die "run as root (sudo $0)"
-for cmd in systemctl tailscale go node caddy curl jq rsync visudo useradd; do
+for cmd in systemctl tailscale go node caddy curl jq rsync visudo useradd git flock; do
   command -v "$cmd" >/dev/null || die "$cmd not found"
 done
 
@@ -28,9 +28,23 @@ dupes=$( (echo "PORT=$GATUS_PORT"; cat "$HERE"/apps/*.env) | sed -n 's/^PORT=//p
 [[ -z $dupes ]] || die "port used twice in apps/*.env (or by gatus): $dupes"
 
 step "files: $HAWK, /usr/local/bin/hawk"
-rsync -a --delete --exclude .git --exclude hawk.env "$HERE/" "$HAWK/"
+rsync -a --delete --exclude .git --exclude hawk.env --exclude node_modules "$HERE/" "$HAWK/"
+git -c safe.directory="$HERE" -C "$HERE" rev-parse HEAD >"$HAWK/COMMIT" 2>/dev/null || echo unknown >"$HAWK/COMMIT"
 chown -R root:root "$HAWK"
 ln -sfn "$HAWK/bin/hawk" /usr/local/bin/hawk
+
+# hawk-update deploys GitHub main (pnpm ship runs it). The user who ran sudo may run it with no password.
+step "ship: /usr/local/sbin/hawk-update"
+install -o root -g root -m 0755 "$HERE/bin/hawk-update" /usr/local/sbin/hawk-update
+if [[ -n ${SUDO_USER:-} && $SUDO_USER != root ]]; then
+  rule="$SUDO_USER ALL=(root) NOPASSWD: /usr/local/sbin/hawk-update \"\""
+  if [[ $(cat /etc/sudoers.d/hawk-update 2>/dev/null) != "$rule" ]]; then
+    printf '%s\n' "$rule" >/etc/sudoers.d/hawk-update.tmp
+    visudo -cqf /etc/sudoers.d/hawk-update.tmp || { rm -f /etc/sudoers.d/hawk-update.tmp; die "bad sudoers rule"; }
+    chmod 0440 /etc/sudoers.d/hawk-update.tmp
+    mv /etc/sudoers.d/hawk-update.tmp /etc/sudoers.d/hawk-update
+  fi
+fi
 
 step "config: $ETC/hawk.env"
 install -d -m 0755 "$ETC"
