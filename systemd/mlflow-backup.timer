@@ -1,0 +1,9 @@
+[Unit]
+Description=hawk: back up the MLflow DB nightly
+
+[Timer]
+OnCalendar=*-*-* 03:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

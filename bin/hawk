@@ -5,7 +5,8 @@
 #   sudo hawk rollback <app> [release] switch to the previous (or given) release and restart
 #   sudo hawk runner <repo-or-org-url> <token>   add a GitHub runner with the label "hawk"
 #   hawk notify <message>              email EMAIL_TO through Resend (values in /etc/hawk/hawk.env)
-#   hawk heartbeat                     ping healthchecks.io, or /fail when the disk is 90%+ full
+#   hawk heartbeat                     ping healthchecks.io, or /fail when the disk is 90%+ full; email when mlflow fills
+#   hawk mlflow-backup                 copy the MLflow DB to /var/backups/mlflow (keeps 7)
 #   hawk status [file]                 write the status page (https://hawk.<domain>) as HTML
 set -euo pipefail
 
@@ -196,6 +197,46 @@ cmd_heartbeat() {
   used=$(df --output=pcent / | tail -1 | tr -dc 0-9)
   ((used < 90)) || fail=/fail
   curl -fsS -m 10 --retry 3 --data-raw "disk / is $used% full" "$HC_PING_URL$fail" >/dev/null
+  mlflow_disk
+}
+
+# Emails once when the mlflow volume reaches 90% and once at 100%. A lower level re-arms it.
+# HAWK_MLFLOW_DIR, HAWK_STATE_DIR and HAWK_MLFLOW_PCT (replaces df) are for tests.
+mlflow_disk() {
+  local dir=${HAWK_MLFLOW_DIR:-/var/lib/mlflow} state=${HAWK_STATE_DIR:-/var/lib/hawk-heartbeat}/mlflow-level
+  local pct avail used level=0 prev
+  findmnt -n "$dir" >/dev/null 2>&1 || return 0
+  pct=${HAWK_MLFLOW_PCT:-$(df --output=pcent "$dir" | tail -1 | tr -dc 0-9)}
+  avail=$(df --output=avail "$dir" | tail -1 | tr -dc 0-9)
+  used=$(df -h --output=used "$dir" | tail -1 | tr -d ' ')
+  ((pct < 90)) || level=90
+  ((pct < 100)) && [[ -n ${HAWK_MLFLOW_PCT:-} || $avail -gt 0 ]] || level=100
+  prev=$(tr -dc 0-9 <"$state" 2>/dev/null || true)
+  prev=${prev:-0}
+  if ((level > prev)); then
+    if ((level == 100)); then cmd_notify "mlflow data is full ($used of 10G)"; else cmd_notify "mlflow data is 90% full ($used of 10G)"; fi
+  fi
+  if ((level != prev)); then
+    mkdir -p "$(dirname "$state")"
+    echo "$level" >"$state"
+  fi
+}
+
+# Writes a consistent copy of the MLflow DB (sqlite online backup) and keeps the 7 newest.
+cmd_mlflow_backup() {
+  local dest=/var/backups/mlflow out
+  out=$dest/mlflow-$(date +%F).db
+  /opt/mlflow/bin/python - /var/lib/mlflow/mlflow.db "$out.tmp" <<'EOF'
+import sqlite3, sys
+src, dst = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
+src.backup(dst)
+dst.close()
+src.close()
+EOF
+  mv "$out.tmp" "$out"
+  local all=("$dest"/mlflow-*.db)
+  ((${#all[@]} <= 7)) || rm -f "${all[@]:0:${#all[@]}-7}"
+  echo "backed up to $out"
 }
 
 # Prints the state of a unit as a colored badge.
@@ -280,5 +321,6 @@ cmd=${1:-}
 shift || true
 case $cmd in
   setup | deploy | rollback | runner | notify | heartbeat | status) "cmd_$cmd" "$@" ;;
-  *) sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
+  mlflow-backup) cmd_mlflow_backup "$@" ;;
+  *) sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
 esac
