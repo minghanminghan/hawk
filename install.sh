@@ -188,9 +188,6 @@ systemctl enable --now hawk-heartbeat.timer >/dev/null
 systemctl enable --now hawk-status.timer >/dev/null
 systemctl enable --now mlflow-backup.timer >/dev/null
 systemctl start hawk-status
-systemctl enable gatus >/dev/null
-if ((restart_gatus)) || ! systemctl is-active --quiet gatus; then systemctl restart gatus; fi
-systemctl is-active --quiet gatus || die "gatus did not start. See journalctl -u gatus"
 systemctl enable mlflow >/dev/null
 if ((restart_mlflow)) || ! systemctl is-active --quiet mlflow; then systemctl restart mlflow; fi
 for _ in $(seq 1 60); do curl -fsS -m 2 "http://127.0.0.1:$MLFLOW_PORT/health" >/dev/null 2>&1 && break; sleep 1; done
@@ -199,6 +196,11 @@ curl -fsS -m 2 "http://127.0.0.1:$MLFLOW_PORT/health" >/dev/null 2>&1 || die "ml
 "$HAWK/caddy/setup.sh" status "127.0.0.1:$GATUS_PORT"
 "$HAWK/caddy/setup.sh" hawk /var/lib/hawk-status
 "$HAWK/caddy/setup.sh" mlflow "127.0.0.1:$MLFLOW_PORT"
+
+# After the sites: a check of a site whose DNS record is new would cache the wrong answer.
+systemctl enable gatus >/dev/null
+if ((restart_gatus)) || ! systemctl is-active --quiet gatus; then systemctl restart gatus; fi
+systemctl is-active --quiet gatus || die "gatus did not start. See journalctl -u gatus"
 
 cat <<EOF
 
