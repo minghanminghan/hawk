@@ -106,6 +106,8 @@ VERCEL_API_TOKEN=$VERCEL_API_TOKEN node --input-type=module -e '
     else await api(`/v2/domains/${domain}/records`, "POST", { name, type, value, ttl: 60 }).then(() => console.log(`    ${type} ${value} (added)`))
   }
 ' "$NAME" "$DOMAIN" "$IP4" "$IP6"
+# Drop answers cached before the record existed (e.g. the domain's wildcard).
+resolvectl flush-caches 2>/dev/null || true
 
 step "health check: https://$HOST"
 for _ in $(seq 1 60); do

@@ -13,7 +13,8 @@ WorkingDirectory=/var/lib/mlflow
 ExecStart=/opt/mlflow/bin/mlflow server --host 127.0.0.1 --port 3401 \
   --backend-store-uri sqlite:////var/lib/mlflow/mlflow.db \
   --serve-artifacts --artifacts-destination /var/lib/mlflow/artifacts \
-  --allowed-hosts mlflow.andrewminghanjiang.com,127.0.0.1:3401,localhost:3401
+  --allowed-hosts mlflow.andrewminghanjiang.com,127.0.0.1:3401,localhost:3401 \
+  --cors-allowed-origins https://mlflow.andrewminghanjiang.com
 Restart=on-failure
 RestartSec=5
 ProtectSystem=strict
