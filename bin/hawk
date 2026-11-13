@@ -251,8 +251,8 @@ badge() {
 # alerts, box.
 cmd_status() {
   local out=${1:-} f apps='' runners='' alerts unit name html tools mlver mldata
-  # Saved MLflow UI views, as HTML links for the mlflow row. Set by spire's tracking setup.
-  local MLFLOW_VIEWS=''
+  # Saved MLflow UI views (spire's experiment records): filter + sort live in the URL.
+  local MLFLOW_VIEWS="<a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27eval%27%20and%20tags.target%20%3D%20%27act1%2Fa0%2Fironclad%2Feval1000%27&amp;orderByKey=attributes.start_time&amp;orderByAsc=false\">Experiments</a> · <a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27idea%27%20and%20tags.verdict%20%3D%20%27planned%27&amp;orderByKey=metrics.%60priority%60&amp;orderByAsc=false\">Queue</a> · <a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27combat-eval%27&amp;orderByKey=attributes.start_time&amp;orderByAsc=false\">Fights</a> · <a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27train%27&amp;compareRunsMode=CHART\">Training</a>"
   for f in "$HAWK"/apps/*.env; do
     apps+=$(
       load "$(basename "$f" .env)"
