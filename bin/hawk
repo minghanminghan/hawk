@@ -211,7 +211,8 @@ mlflow_disk() {
   used=$(df -h --output=used "$dir" | tail -1 | tr -d ' ')
   ((pct < 90)) || level=90
   ((pct < 100)) && [[ -n ${HAWK_MLFLOW_PCT:-} || $avail -gt 0 ]] || level=100
-  prev=$(tr -dc 0-9 <"$state" 2>/dev/null || true)
+  prev=0
+  [[ ! -f $state ]] || prev=$(tr -dc 0-9 <"$state")
   prev=${prev:-0}
   if ((level > prev)); then
     if ((level == 100)); then cmd_notify "mlflow data is full ($used of 10G)"; else cmd_notify "mlflow data is 90% full ($used of 10G)"; fi
@@ -246,9 +247,12 @@ badge() {
   if [[ $s == active ]]; then echo "<b class=ok>$s</b>"; else echo "<b class=bad>${s:-unknown}</b>"; fi
 }
 
-# Per app: live version, release, deploy time, previous release, services. Then runners, alerts, box.
+# Per app: live version, release, deploy time, previous release, services. Then tools, runners,
+# alerts, box.
 cmd_status() {
-  local out=${1:-} f apps='' runners='' alerts unit name html
+  local out=${1:-} f apps='' runners='' alerts unit name html tools mlver mldata
+  # Saved MLflow UI views, as HTML links for the mlflow row. Set by spire's tracking setup.
+  local MLFLOW_VIEWS=''
   for f in "$HAWK"/apps/*.env; do
     apps+=$(
       load "$(basename "$f" .env)"
@@ -262,6 +266,14 @@ cmd_status() {
         "$APP" "$DOMAIN" "$APP" "${ver:-<b class=bad>down</b>}" "${rel:--}" "${at:--}" "${prev:--}" "$svcs"
     )
   done
+  mlver=$(curl -fsS -m 3 http://127.0.0.1:3401/version 2>/dev/null | tr -dc '0-9a-z.')
+  mldata=-
+  if findmnt -n /var/lib/mlflow >/dev/null 2>&1; then
+    mldata=$(df -h --output=pcent,used,size /var/lib/mlflow | tail -1 |
+      awk '{ p = $1 + 0; s = $2 " of " $3; print (p >= 90 ? "<b class=bad>" s "</b>" : s) }')
+  fi
+  tools="<tr><td><a href=\"https://status.$DOMAIN\">gatus</a></td><td>$(badge gatus)</td><td>-</td><td>-</td><td>-</td></tr>
+<tr><td><a href=\"https://mlflow.$DOMAIN\">mlflow</a></td><td>$(badge mlflow)</td><td>${mlver:-<b class=bad>down</b>}</td><td>$mldata</td><td>${MLFLOW_VIEWS:--}</td></tr>"
   for unit in $(systemctl list-units --all --plain --no-legend 'actions.runner.*' | awk '{print $1}'); do
     name=${unit#actions.runner.}
     runners+="<tr><td>${name%.service}</td><td>$(badge "$unit")</td></tr>"
@@ -296,6 +308,11 @@ th { font-weight: 500; font-size: 13px; } .ok { color: var(--ok); } .bad { color
 <tr><th>App</th><th>Live version</th><th>Release / deployed (UTC)</th><th>Rollback target</th><th>Services</th></tr>
 $apps
 </table></div>
+<h2>Tools</h2>
+<div class=wrap><table>
+<tr><th>Tool</th><th>State</th><th>Version</th><th>Data</th><th>Links</th></tr>
+$tools
+</table></div>
 <h2>Runners</h2>
 <div class=wrap><table>${runners:-<tr><td>none</td></tr>}</table></div>
 <h2>Alerts, last 7 days</h2>
@@ -305,7 +322,6 @@ $apps
 <tr><td>Disk /</td><td>$(df -h --output=pcent,size / | tail -1 | awk '{print $1 " of " $2}')</td></tr>
 <tr><td>Uptime</td><td>$(uptime -p)</td></tr>
 <tr><td>Heartbeat</td><td>$(systemctl show -P Result hawk-heartbeat.service) <small>$(systemctl show -P ExecMainExitTimestamp hawk-heartbeat.service)</small></td></tr>
-<tr><td>gatus</td><td>$(badge gatus)</td></tr>
 <tr><td>caddy</td><td>$(badge caddy)</td></tr>
 </table></div>
 </body>
