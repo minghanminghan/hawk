@@ -7,5 +7,6 @@ After=network-online.target
 [Service]
 Type=oneshot
 DynamicUser=true
+StateDirectory=hawk-heartbeat
 EnvironmentFile=/etc/hawk/hawk.env
 ExecStart=/opt/hawk/bin/hawk heartbeat

@@ -186,6 +186,7 @@ done
 ((reload == 0)) || systemctl daemon-reload
 systemctl enable --now hawk-heartbeat.timer >/dev/null
 systemctl enable --now hawk-status.timer >/dev/null
+systemctl enable --now mlflow-backup.timer >/dev/null
 systemctl start hawk-status
 systemctl enable gatus >/dev/null
 if ((restart_gatus)) || ! systemctl is-active --quiet gatus; then systemctl restart gatus; fi
