@@ -1,0 +1,25 @@
+# MLflow tracking server at https://mlflow.<domain> (127.0.0.1:3401). Installed by install.sh.
+[Unit]
+Description=hawk: MLflow tracking server
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/var/lib/mlflow
+OnFailure=hawk-notify@%N.service
+
+[Service]
+User=mlflow
+Group=mlflow
+WorkingDirectory=/var/lib/mlflow
+ExecStart=/opt/mlflow/bin/mlflow server --host 127.0.0.1 --port 3401 \
+  --backend-store-uri sqlite:////var/lib/mlflow/mlflow.db \
+  --serve-artifacts --artifacts-destination /var/lib/mlflow/artifacts \
+  --allowed-hosts mlflow.andrewminghanjiang.com,127.0.0.1:3401,localhost:3401
+Restart=on-failure
+RestartSec=5
+ProtectSystem=strict
+ReadWritePaths=/var/lib/mlflow
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

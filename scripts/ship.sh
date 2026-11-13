@@ -248,7 +248,7 @@ fi
 # shellcheck disable=SC2016
 run ssh "$SERVER" 'bad=; for f in /opt/hawk/apps/*.env; do . "$f"; [ -e "/opt/$(basename "$f" .env)/current" ] || continue;
   for u in $SERVICES; do systemctl is-active -q "$u" || bad="$bad $u"; done; done
-  for u in gatus caddy hawk-status.timer hawk-heartbeat.timer; do systemctl is-active -q "$u" || bad="$bad $u"; done
+  for u in gatus mlflow caddy hawk-status.timer hawk-heartbeat.timer; do systemctl is-active -q "$u" || bad="$bad $u"; done
   [ -z "$bad" ] || { echo "not active:$bad"; exit 1; }'
 say "box runs ${BOX:0:7}; all services active"
 
